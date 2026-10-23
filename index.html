@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+<title>ETS Cleaning Inspection Dashboard</title>
+
+<style>
+
+body{
+font-family:Arial;
+background:#f4f6f9;
+padding:30px;
+}
+
+h1{
+margin-bottom:20px;
+}
+
+.filters{
+background:white;
+padding:15px;
+border-radius:10px;
+margin-bottom:20px;
+box-shadow:0 3px 8px rgba(0,0,0,0.1);
+}
+
+select,input{
+padding:8px;
+margin-right:10px;
+}
+
+button{
+padding:9px 15px;
+cursor:pointer;
+}
+
+.report{
+display:none;
+background:white;
+padding:20px;
+border-radius:10px;
+box-shadow:0 3px 10px rgba(0,0,0,0.1);
+margin-bottom:30px;
+}
+
+.report-grid{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+gap:15px;
+margin-bottom:10px;
+}
+
+.gallery{
+display:grid;
+grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+gap:15px;
+}
+
+.gallery img{
+width:100%;
+height:220px;
+object-fit:cover;
+border-radius:10px;
+cursor:pointer;
+box-shadow:0 3px 10px rgba(0,0,0,0.2);
+}
+
+.badge{
+padding:5px 10px;
+border-radius:6px;
+color:white;
+font-weight:bold;
+font-size:13px;
+}
+
+.badge.normal{background:#3498db;}
+.badge.spot{background:#f39c12;}
+.badge.deep{background:#e74c3c;}
+
+#viewer{
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,0.9);
+display:none;
+align-items:center;
+justify-content:center;
+}
+
+#viewer img{
+max-width:90%;
+max-height:90%;
+}
+
+.print-btn{
+float:right;
+margin-top:-5px;
+}
+
+</style>
+</head>
+
+<body>
+
+<h1>ETS Cleaning Inspection Dashboard</h1>
+
+<div class="filters">
+
+Train Set
+<select id="trainSelect"></select>
+
+Tarikh
+<input type="date" id="dateSelect">
+
+Jenis
+<select id="typeSelect"></select>
+
+Masa
+<select id="timeSelect"></select>
+
+<button onclick="loadReport()">Load Report</button>
+
+<button class="print-btn" onclick="window.print()">Print PDF</button>
+
+</div>
+
+
+<div class="report" id="report">
+
+<div class="report-grid">
+
+<div><b>Train Set:</b> <span id="trainSpan"></span></div>
+<div><b>Tarikh:</b> <span id="dateSpan"></span></div>
+<div><b>Depoh / Stesen:</b> <span id="depotSpan"></span></div>
+<div><b>Jenis:</b> <span id="cleaningType" class="badge"></span></div>
+<div><b>Masa Mula:</b> <span id="startTime"></span></div>
+<div><b>Penyelia:</b> <span id="supervisor"></span></div>
+
+</div>
+
+</div>
+
+
+<h2>Sebelum Cucian</h2>
+<div class="gallery" id="before"></div>
+
+<h2>Semasa Cucian</h2>
+<div class="gallery" id="during"></div>
+
+<h2>Selepas Cucian</h2>
+<div class="gallery" id="after"></div>
+
+
+<div id="viewer" onclick="this.style.display='none'">
+<img id="viewerImg">
+</div>
+
+
+<script>
+
+const sheetURL="https://docs.google.com/spreadsheets/d/1kKb3MwSUXLsfu2mLKFcygGS27wKMksAMASERRe4ebaE/gviz/tq?tqx=out:json&gid=1632722066";
+
+let rowsData=[];
+
+
+/* URL PARAMETER */
+
+const params=new URLSearchParams(window.location.search);
+
+const paramTrain=params.get("train");
+const paramDate=params.get("date");
+const paramType=params.get("type");
+const paramTime=params.get("time");
+
+
+
+function parseSheetDate(d){
+
+if(!d) return "";
+
+d=String(d);
+
+if(d.startsWith("Date(")){
+
+let p=d.replace("Date(","").replace(")","").split(",");
+
+let y=p[0];
+let m=String(Number(p[1])+1).padStart(2,"0");
+let day=String(p[2]).padStart(2,"0");
+
+return `${y}-${m}-${day}`;
+
+}
+
+return d;
+
+}
+
+
+
+function normalizeTime(t){
+
+if(!t) return "";
+
+t=decodeURIComponent(String(t)).trim();
+
+if(t.startsWith("Date(")){
+
+let p=t.replace("Date(","").replace(")","").split(",");
+
+let h=parseInt(p[3]);
+let m=parseInt(p[4]);
+
+return h+":"+m;
+
+}
+
+if(t.includes("AM")||t.includes("PM")){
+
+let parts=t.split(" ");
+
+let hm=parts[0].split(":");
+
+let h=parseInt(hm[0]);
+let m=parseInt(hm[1]);
+
+if(parts[1]=="PM" && h<12) h+=12;
+if(parts[1]=="AM" && h==12) h=0;
+
+return h+":"+m;
+
+}
+
+if(t.includes(":")){
+
+let hm=t.split(":");
+
+return parseInt(hm[0])+":"+parseInt(hm[1]);
+
+}
+
+return t;
+
+}
+
+function formatDisplayTime(t){
+
+if(!t) return "";
+
+t=String(t);
+
+if(t.startsWith("Date(")){
+
+let p=t.replace("Date(","").replace(")","").split(",");
+
+let h=parseInt(p[3]);
+let m=parseInt(p[4]);
+
+let ampm="AM";
+
+if(h>=12){
+ampm="PM";
+if(h>12) h-=12;
+}
+
+if(h==0) h=12;
+
+m=String(m).padStart(2,"0");
+
+return h+":"+m+" "+ampm;
+
+}
+
+return t;
+
+}
+
+function extractDriveIDs(text){
+
+let ids=[];
+
+text=decodeURIComponent(text);
+
+let links=text.split(",");
+
+links.forEach(link=>{
+
+link=link.trim();
+
+if(link.includes("open?id=")){
+
+let id=link.split("open?id=")[1];
+
+ids.push(id);
+
+}
+
+});
+
+return ids;
+
+}
+
+
+
+function renderImages(ids,container){
+
+container.innerHTML="";
+
+ids.forEach(id=>{
+
+let img=document.createElement("img");
+
+img.src="https://lh3.googleusercontent.com/d/"+id+"=w1200";
+
+img.onclick=function(){
+
+document.getElementById("viewerImg").src=this.src;
+
+document.getElementById("viewer").style.display="flex";
+
+}
+
+container.appendChild(img);
+
+});
+
+}
+
+
+
+function populateFilters(){
+
+let trainSet=[...new Set(rowsData.map(r=>r.c[7]?.v))].filter(Boolean).sort((a,b)=>a-b);
+
+let typeSet=[...new Set(rowsData.map(r=>r.c[5]?.v))].filter(Boolean);
+
+let timeSet=[...new Set(rowsData.map(r=>normalizeTime(r.c[3]?.v)))].filter(Boolean);
+
+
+trainSet.forEach(t=>{
+
+let o=document.createElement("option");
+
+o.value=t;
+
+o.text=t;
+
+trainSelect.appendChild(o);
+
+});
+
+
+typeSet.forEach(t=>{
+
+let o=document.createElement("option");
+
+o.value=t;
+
+o.text=t;
+
+typeSelect.appendChild(o);
+
+});
+
+
+timeSet.forEach(t=>{
+
+let o=document.createElement("option");
+
+o.value=t;
+
+o.text=t;
+
+timeSelect.appendChild(o);
+
+});
+
+}
+
+
+
+function loadReport(){
+
+let train=trainSelect.value;
+
+let date=dateSelect.value;
+
+let type=typeSelect.value;
+
+let time=normalizeTime(timeSelect.value);
+
+
+let row=rowsData.find(r=>{
+
+let sheetDate=parseSheetDate(r.c[2]?.v);
+
+let sheetTime=normalizeTime(r.c[3]?.v);
+
+return r.c[7]?.v==train &&
+sheetDate==date &&
+r.c[5]?.v==type &&
+sheetTime==time;
+
+});
+
+
+if(!row){
+
+alert("Data tidak dijumpai");
+
+return;
+
+}
+
+
+report.style.display="block";
+
+
+trainSpan.innerText=train;
+
+dateSpan.innerText=date;
+
+depotSpan.innerText=row.c[6]?.v || "";
+
+/*startTime.innerText=row.c[3]?.v || "";*/
+  startTime.innerText=formatDisplayTime(row.c[3]?.v);
+
+supervisor.innerText=row.c[8]?.v || "";
+
+
+let typeBadge=document.getElementById("cleaningType");
+
+let typeText=row.c[5]?.v || "";
+
+typeBadge.innerText=typeText;
+
+typeBadge.className="badge";
+
+if(typeText.toLowerCase().includes("normal")) typeBadge.classList.add("normal");
+
+if(typeText.toLowerCase().includes("spot")) typeBadge.classList.add("spot");
+
+if(typeText.toLowerCase().includes("deep")) typeBadge.classList.add("deep");
+
+
+renderImages(extractDriveIDs(row.c[10]?.v || ""),before);
+
+renderImages(extractDriveIDs(row.c[11]?.v || ""),during);
+
+renderImages(extractDriveIDs(row.c[12]?.v || ""),after);
+
+}
+
+
+
+fetch(sheetURL)
+.then(res=>res.text())
+.then(data=>{
+
+let json=JSON.parse(data.substr(47).slice(0,-2));
+
+rowsData=json.table.rows;
+
+populateFilters();
+
+
+/* AUTO LOAD FROM LOOKER STUDIO */
+
+if(paramTrain){
+
+trainSelect.value=paramTrain;
+
+dateSelect.value=paramDate;
+
+typeSelect.value=decodeURIComponent(paramType);
+
+timeSelect.value=normalizeTime(paramTime);
+
+loadReport();
+
+}
+
+});
+
+</script>
+
+</body>
+</html>
